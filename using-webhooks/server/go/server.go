@@ -26,6 +26,9 @@ func main() {
 
 	http.Handle("/", http.FileServer(http.Dir(os.Getenv("STATIC_DIR"))))
 	http.HandleFunc("/create-payment-intent", handleCreatePaymentIntent)
+	http.HandleFunc("/capture-payment-intent", handleCapturePaymentIntent)
+	http.HandleFunc("/cancel-payment-intent", handleCancelPaymentIntent)
+	http.HandleFunc("/confirm-payment-intent", handleConfirmPaymentIntent)
 	http.HandleFunc("/webhook", handleWebhook)
 
 	addr := "localhost:4242"
@@ -51,11 +54,6 @@ type PayRequestParams struct {
 	Items    []PayItemParams `json:"items"`
 }
 
-func calculateOrderAmount(items []PayItemParams) (amount int64) {
-	amount = 1400
-	return
-}
-
 func handleCreatePaymentIntent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
@@ -70,10 +68,6 @@ func handleCreatePaymentIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// calculate the order amount, you'll need to modify `calculateOrderAmount`
-	// to match your business logic.
-	orderAmount := calculateOrderAmount(req.Items)
-
 	customerParams := &stripe.CustomerParams{}
 	c, err := customer.New(customerParams)
 	if err != nil {
@@ -82,10 +76,17 @@ func handleCreatePaymentIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// authorize 1 USD to return it back after confirmation - https://docs.stripe.com/payments/place-a-hold-on-a-payment-method#authorize-only
 	paymentIntentParams := &stripe.PaymentIntentParams{
-		Amount:   stripe.Int64(orderAmount),
+		Amount:   stripe.Int64(100),
 		Currency: stripe.String(req.Currency),
-		Customer: stripe.String(c.ID),
+		//Customer: stripe.String("cus_R2Dh6KhWIpjy9w"),
+		Customer:                  stripe.String(c.ID),
+		CaptureMethod:             stripe.String(string(stripe.PaymentIntentCaptureMethodManual)),
+		SetupFutureUsage:          stripe.String(string(stripe.PaymentIntentSetupFutureUsageOffSession)),
+		StatementDescriptor:       stripe.String("firebolt"),
+		StatementDescriptorSuffix: stripe.String("pre-auth"),
+		Description:               stripe.String("Pre-authorize 1.00 USD to return it back after confirmation"),
 	}
 
 	pi, err := paymentintent.New(paymentIntentParams)
@@ -104,6 +105,114 @@ func handleCreatePaymentIntent(w http.ResponseWriter, r *http.Request) {
 		ClientSecret: pi.ClientSecret,
 		ID:           pi.ID,
 	})
+}
+
+// handleCapturePaymentIntent captures amount specified in payment intent by specified id.
+// https://docs.stripe.com/payments/place-a-hold-on-a-payment-method#capture-funds
+func handleCapturePaymentIntent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+	// CaptureRequestParams represents the structure of the request from
+	// the client.
+	type CaptureRequestParams struct {
+		PaymentIntentID string `json:"paymentIntentID"`
+		Amount          int64  `json:"amount"`
+	}
+
+	// Decode the incoming request
+	req := CaptureRequestParams{}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("json.NewDecoder.Decode: %v", err)
+		return
+	}
+
+	params := &stripe.PaymentIntentCaptureParams{
+		AmountToCapture: stripe.Int64(req.Amount),
+	}
+
+	pi, err := paymentintent.Capture(req.PaymentIntentID, params)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("paymentintent.Capture: %v", err)
+	}
+
+	writeJSON(w, pi)
+}
+
+// handleConfirmPaymentIntent captures amount specified in payment intent by specified id.
+// https://docs.stripe.com/payments/payment-intents/upgrade-to-handle-actions
+func handleConfirmPaymentIntent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+	// CaptureRequestParams represents the structure of the request from
+	// the client.
+	type ConfirmRequestParams struct {
+		PaymentIntentID string `json:"paymentIntentID"`
+	}
+
+	// Decode the incoming request
+	req := ConfirmRequestParams{}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("json.NewDecoder.Decode: %v", err)
+		return
+	}
+
+	pi, err := paymentintent.Get(req.PaymentIntentID, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("paymentintent.Get: %v", err)
+		return
+	}
+
+	writeJSON(w, struct {
+		PublicKey    string `json:"publicKey"`
+		ClientSecret string `json:"clientSecret"`
+		ID           string `json:"id"`
+	}{
+		PublicKey:    os.Getenv("STRIPE_PUBLISHABLE_KEY"),
+		ClientSecret: pi.ClientSecret,
+		ID:           pi.ID,
+	})
+}
+
+// handleCancelPaymentIntent cancels amount specified in payment intent by specified id.
+// https://docs.stripe.com/refunds?dashboard-or-api=api#cancel-payment
+func handleCancelPaymentIntent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+	// CaptureRequestParams represents the structure of the request from
+	// the client.
+	type CancelRequestParams struct {
+		PaymentIntentID string `json:"paymentIntentID"`
+	}
+
+	// Decode the incoming request
+	req := CancelRequestParams{}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("json.NewDecoder.Decode: %v", err)
+		return
+	}
+
+	params := &stripe.PaymentIntentCancelParams{
+		CancellationReason: stripe.String(string(stripe.PaymentIntentCancellationReasonAbandoned)),
+	}
+
+	pi, err := paymentintent.Cancel(req.PaymentIntentID, params)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("paymentintent.Capture: %v", err)
+	}
+
+	writeJSON(w, pi)
 }
 
 func handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +235,7 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if event.Type == "payment_method.attached" {
-		log.Printf("❗ PaymentMethod successfully attached to Customer")
+		log.Printf("❗ PaymentMethod successfully attached to Customer: %s", event.Data.Raw)
 		return
 	}
 
@@ -150,6 +259,18 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 		log.Printf("❌ Payment failed.")
 		return
 	}
+	if event.Type == "payment_intent.requires_action" {
+		log.Printf("💰 Payment requires action: %s", event.Data.Raw)
+		return
+	}
+	if event.Type == "payment_intent.amount_capturable_updated" {
+		log.Printf("💰 Payment captured amount updated: %s", event.Data.Raw)
+		return
+	}
+	//if event.Type == "charge.succeeded" {
+	//	log.Printf("💰 Charge succeeded: %s", event.Data.Raw)
+	//	return
+	//}
 
 	writeJSON(w, struct {
 		Status string `json:"status"`
