@@ -12,7 +12,6 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/stripe/stripe-go/v71"
-	"github.com/stripe/stripe-go/v71/customer"
 	"github.com/stripe/stripe-go/v71/paymentintent"
 	"github.com/stripe/stripe-go/v71/webhook"
 )
@@ -68,20 +67,20 @@ func handleCreatePaymentIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	customerParams := &stripe.CustomerParams{}
-	c, err := customer.New(customerParams)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		log.Printf("customer.New: %v", err)
-		return
-	}
+	//customerParams := &stripe.CustomerParams{}
+	//c, err := customer.New(customerParams)
+	//if err != nil {
+	//	http.Error(w, err.Error(), http.StatusInternalServerError)
+	//	log.Printf("customer.New: %v", err)
+	//	return
+	//}
 
 	// authorize 1 USD to return it back after confirmation - https://docs.stripe.com/payments/place-a-hold-on-a-payment-method#authorize-only
 	paymentIntentParams := &stripe.PaymentIntentParams{
 		Amount:   stripe.Int64(100),
 		Currency: stripe.String(req.Currency),
-		//Customer: stripe.String("cus_R2Dh6KhWIpjy9w"),
-		Customer:                  stripe.String(c.ID),
+		Customer: stripe.String("cus_R2DlGHVRhHXOmR"),
+		//Customer:                  stripe.String(c.ID),
 		CaptureMethod:             stripe.String(string(stripe.PaymentIntentCaptureMethodManual)),
 		SetupFutureUsage:          stripe.String(string(stripe.PaymentIntentSetupFutureUsageOffSession)),
 		StatementDescriptor:       stripe.String("firebolt"),

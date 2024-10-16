@@ -20,36 +20,26 @@
           <div class="sr-header__logo"></div>
         </header>
         <div class="sr-payment-summary payment-view">
-          <h1 class="order-amount">$1.00 Pre auth</h1>
-          <h4>Share credit card details for future invoice payments. Amount will be returned once payment processed correctly.</h4>
-        </div>        
+          <h1>Cancel payment</h1>
+        </div>
+        <div>
+            <h1 class="sr-heading">Cancel your order</h1>
+            <p class="sr-paragraph">
+                Provide payment id to Cancel.
+            </p>
+            <div class="sr-form-row">
+                <input
+                type="text"
+                id="payment-id"
+                placeholder="Payment ID"
+                class="sr-input"
+                />
+              <button id="cancel"><div class="spinner hidden" id="spinner"></div><span id="button-text">Cancel</span></button>
+            </div>
+        </div>
         <div class="sr-payment-form payment-view">
           <div class="sr-form-row">
-            <label for="card-element">
-              Payment details
-            </label>
-            <div class="sr-combo-inputs">
-              <div class="sr-combo-inputs-row">
-                <input
-                  type="text"
-                  id="name"
-                  placeholder="Name"
-                  autocomplete="cardholder"
-                  class="sr-input"
-                />
-              </div>
-              <div class="sr-combo-inputs-row">
-                <div class="sr-input sr-card-element" id="card-element"></div>
-              </div>
-            </div>
             <div class="sr-field-error" id="card-errors" role="alert"></div>
-            <div class="sr-form-row">
-              <label class="sr-checkbox-label"><input type="checkbox" id="save-card" checked><span class="sr-checkbox-check"></span> Save card for future payments</label>
-            </div>
-          </div>
-          <button id="submit"><div class="spinner hidden" id="spinner"></div><span id="button-text">Pay</span></button>
-          <div class="sr-legal-text">
-            Your card will be charge $1.00<span id="save-card-text"> and your card details will be saved to your billing profile</span>.
           </div>
         </div>
         <div class="sr-payment-summary hidden completed-view">
@@ -64,7 +54,7 @@
   
             </pre>
           </div>
-          <button onclick="window.location.href = '/';">Restart demo</button>
+          <button onclick="window.location.href = '/cancel';">Cancel next payment intent</button>
         </div>  
       </div>
       <div class="sr-content">
