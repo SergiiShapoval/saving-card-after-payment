@@ -11,9 +11,11 @@ import (
 	"os"
 
 	"github.com/joho/godotenv"
-	"github.com/stripe/stripe-go/v71"
-	"github.com/stripe/stripe-go/v71/paymentintent"
-	"github.com/stripe/stripe-go/v71/webhook"
+	"github.com/stripe/stripe-go/v80"
+	"github.com/stripe/stripe-go/v80/customer"
+	"github.com/stripe/stripe-go/v80/paymentintent"
+	"github.com/stripe/stripe-go/v80/setupintent"
+	"github.com/stripe/stripe-go/v80/webhook"
 )
 
 func main() {
@@ -25,6 +27,7 @@ func main() {
 
 	http.Handle("/", http.FileServer(http.Dir(os.Getenv("STATIC_DIR"))))
 	http.HandleFunc("/create-payment-intent", handleCreatePaymentIntent)
+	http.HandleFunc("/create-setup-intent", handleCreateSetupIntent)
 	http.HandleFunc("/capture-payment-intent", handleCapturePaymentIntent)
 	http.HandleFunc("/cancel-payment-intent", handleCancelPaymentIntent)
 	http.HandleFunc("/confirm-payment-intent", handleConfirmPaymentIntent)
@@ -67,28 +70,80 @@ func handleCreatePaymentIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//customerParams := &stripe.CustomerParams{}
-	//c, err := customer.New(customerParams)
-	//if err != nil {
-	//	http.Error(w, err.Error(), http.StatusInternalServerError)
-	//	log.Printf("customer.New: %v", err)
-	//	return
-	//}
+	customerParams := &stripe.CustomerParams{}
+	c, err := customer.New(customerParams)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("customer.New: %v", err)
+		return
+	}
 
 	// authorize 1 USD to return it back after confirmation - https://docs.stripe.com/payments/place-a-hold-on-a-payment-method#authorize-only
 	paymentIntentParams := &stripe.PaymentIntentParams{
 		Amount:   stripe.Int64(100),
 		Currency: stripe.String(req.Currency),
-		Customer: stripe.String("cus_R2DlGHVRhHXOmR"),
-		//Customer:                  stripe.String(c.ID),
+		//Customer: stripe.String("cus_R2DlGHVRhHXOmR"),
+		Customer:                  stripe.String(c.ID),
 		CaptureMethod:             stripe.String(string(stripe.PaymentIntentCaptureMethodManual)),
 		SetupFutureUsage:          stripe.String(string(stripe.PaymentIntentSetupFutureUsageOffSession)),
 		StatementDescriptor:       stripe.String("firebolt"),
 		StatementDescriptorSuffix: stripe.String("pre-auth"),
 		Description:               stripe.String("Pre-authorize 1.00 USD to return it back after confirmation"),
+		AutomaticPaymentMethods: &stripe.PaymentIntentAutomaticPaymentMethodsParams{
+			Enabled: stripe.Bool(true),
+		},
 	}
 
 	pi, err := paymentintent.New(paymentIntentParams)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("paymentintent.New: %v", err)
+		return
+	}
+
+	writeJSON(w, struct {
+		PublicKey    string `json:"publicKey"`
+		ClientSecret string `json:"clientSecret"`
+		ID           string `json:"id"`
+	}{
+		PublicKey:    os.Getenv("STRIPE_PUBLISHABLE_KEY"),
+		ClientSecret: pi.ClientSecret,
+		ID:           pi.ID,
+	})
+}
+
+func handleCreateSetupIntent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Decode the incoming request
+	req := PayRequestParams{}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("json.NewDecoder.Decode: %v", err)
+		return
+	}
+
+	customerParams := &stripe.CustomerParams{}
+	c, err := customer.New(customerParams)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("customer.New: %v", err)
+		return
+	}
+
+	setupIntentParams := &stripe.SetupIntentParams{
+		//Customer: stripe.String("cus_R2DlGHVRhHXOmR"),
+		Customer:    stripe.String(c.ID),
+		Description: stripe.String("Capture payment details for future use"),
+		AutomaticPaymentMethods: &stripe.SetupIntentAutomaticPaymentMethodsParams{
+			Enabled: stripe.Bool(true),
+		},
+	}
+
+	pi, err := setupintent.New(setupIntentParams)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		log.Printf("paymentintent.New: %v", err)
