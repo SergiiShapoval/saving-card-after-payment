@@ -12,7 +12,6 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/stripe/stripe-go/v80"
-	"github.com/stripe/stripe-go/v80/customer"
 	"github.com/stripe/stripe-go/v80/paymentintent"
 	"github.com/stripe/stripe-go/v80/setupintent"
 	"github.com/stripe/stripe-go/v80/webhook"
@@ -27,6 +26,7 @@ func main() {
 
 	http.Handle("/", http.FileServer(http.Dir(os.Getenv("STATIC_DIR"))))
 	http.HandleFunc("/create-payment-intent", handleCreatePaymentIntent)
+	http.HandleFunc("/resolve-last-payment-intent", handleResolveLastPaymentIntent)
 	http.HandleFunc("/create-setup-intent", handleCreateSetupIntent)
 	http.HandleFunc("/capture-payment-intent", handleCapturePaymentIntent)
 	http.HandleFunc("/cancel-payment-intent", handleCancelPaymentIntent)
@@ -70,20 +70,20 @@ func handleCreatePaymentIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	customerParams := &stripe.CustomerParams{}
-	c, err := customer.New(customerParams)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		log.Printf("customer.New: %v", err)
-		return
-	}
+	//customerParams := &stripe.CustomerParams{}
+	//c, err := customer.New(customerParams)
+	//if err != nil {
+	//	http.Error(w, err.Error(), http.StatusInternalServerError)
+	//	log.Printf("customer.New: %v", err)
+	//	return
+	//}
 
 	// authorize 1 USD to return it back after confirmation - https://docs.stripe.com/payments/place-a-hold-on-a-payment-method#authorize-only
 	paymentIntentParams := &stripe.PaymentIntentParams{
 		Amount:   stripe.Int64(100),
 		Currency: stripe.String(req.Currency),
-		//Customer: stripe.String("cus_R2DlGHVRhHXOmR"),
-		Customer:                  stripe.String(c.ID),
+		Customer: stripe.String("cus_R2wA35BYRGKC8o"),
+		//Customer:                  stripe.String(c.ID),
 		CaptureMethod:             stripe.String(string(stripe.PaymentIntentCaptureMethodManual)),
 		SetupFutureUsage:          stripe.String(string(stripe.PaymentIntentSetupFutureUsageOffSession)),
 		StatementDescriptor:       stripe.String("firebolt"),
@@ -111,7 +111,146 @@ func handleCreatePaymentIntent(w http.ResponseWriter, r *http.Request) {
 		ID:           pi.ID,
 	})
 }
+func handleResolveLastPaymentIntent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
 
+	// PayRequestParams represents the structure of the request from
+	// the client.
+	type ResolvePayRequestParams struct {
+		CustomerID string `json:"customerID"`
+	}
+	// Decode the incoming request
+	req := ResolvePayRequestParams{}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("json.NewDecoder.Decode: %v", err)
+		return
+	}
+
+	listPaymentIntent := paymentintent.List(&stripe.PaymentIntentListParams{
+		Customer: stripe.String(req.CustomerID),
+	})
+	if err := listPaymentIntent.Err(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("paymentintent.List: %v", err)
+		return
+	}
+	//for listPaymentIntent.Next() {
+	//}
+
+	//// authorize 1 USD to return it back after confirmation - https://docs.stripe.com/payments/place-a-hold-on-a-payment-method#authorize-only
+	//paymentIntentParams := &stripe.PaymentIntentParams{
+	//	Amount:   stripe.Int64(100),
+	//	Currency: stripe.String(req.Currency),
+	//	//Customer: stripe.String("cus_R2wA35BYRGKC8o"),
+	//	Customer:                  stripe.String(c.ID),
+	//	CaptureMethod:             stripe.String(string(stripe.PaymentIntentCaptureMethodManual)),
+	//	SetupFutureUsage:          stripe.String(string(stripe.PaymentIntentSetupFutureUsageOffSession)),
+	//	StatementDescriptor:       stripe.String("firebolt"),
+	//	StatementDescriptorSuffix: stripe.String("pre-auth"),
+	//	Description:               stripe.String("Pre-authorize 1.00 USD to return it back after confirmation"),
+	//	AutomaticPaymentMethods: &stripe.PaymentIntentAutomaticPaymentMethodsParams{
+	//		Enabled: stripe.Bool(true),
+	//	},
+	//}
+	//
+	//pi, err := paymentintent.New(paymentIntentParams)
+	//if err != nil {
+	//	http.Error(w, err.Error(), http.StatusInternalServerError)
+	//	log.Printf("paymentintent.New: %v", err)
+	//	return
+	//}
+	if !listPaymentIntent.Next() {
+		http.Error(w, "No payment intent found", http.StatusInternalServerError)
+		log.Printf("paymentintent.List: No payment intent found")
+		return
+	}
+	pi := listPaymentIntent.PaymentIntent()
+	log.Printf("pi: %v\n", pi)
+	if pi.Status == stripe.PaymentIntentStatusRequiresPaymentMethod {
+		// should be in webhook handler
+		oldPiID := pi.ID
+		var err error
+		// new needed, so customer can select
+		pi, err = paymentintent.New(copyIntentForFreshPayment(pi))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("paymentintent.Update: %v", err)
+			return
+		}
+		_, err = paymentintent.Cancel(oldPiID, nil)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("paymentintent.Cancel: %v", err)
+		}
+	}
+	writeJSON(w, struct {
+		Amount       int64  `json:"amount"`
+		PublicKey    string `json:"publicKey"`
+		ClientSecret string `json:"clientSecret"`
+		ID           string `json:"id"`
+	}{
+		Amount:       pi.Amount,
+		PublicKey:    os.Getenv("STRIPE_PUBLISHABLE_KEY"),
+		ClientSecret: pi.ClientSecret,
+		ID:           pi.ID,
+	})
+}
+
+func copyIntentForFreshPayment(pi *stripe.PaymentIntent) *stripe.PaymentIntentParams {
+
+	receiptEmail := pi.ReceiptEmail
+	var receiptEmailRef *string
+	if receiptEmail != "" {
+		receiptEmailRef = &receiptEmail
+	}
+	return &stripe.PaymentIntentParams{
+		Params:               stripe.Params{},
+		Amount:               stripe.Int64(pi.Amount),
+		ApplicationFeeAmount: stripe.Int64(pi.ApplicationFeeAmount),
+		AutomaticPaymentMethods: &stripe.PaymentIntentAutomaticPaymentMethodsParams{
+			AllowRedirects: stripe.String(string(stripe.PaymentIntentAutomaticPaymentMethodsAllowRedirectsNever)),
+			Enabled:        stripe.Bool(true),
+		},
+		CaptureMethod:              stripe.String(string(stripe.PaymentIntentCaptureMethodAutomatic)),
+		ClientSecret:               nil,
+		Confirm:                    nil,
+		ConfirmationMethod:         nil,
+		ConfirmationToken:          nil,
+		Currency:                   stripe.String(string(pi.Currency)),
+		Customer:                   stripe.String(pi.Customer.ID),
+		Description:                stripe.String(pi.Description),
+		Expand:                     nil,
+		Mandate:                    nil,
+		MandateData:                nil,
+		Metadata:                   pi.Metadata,
+		OnBehalfOf:                 nil,
+		PaymentMethod:              nil,
+		PaymentMethodConfiguration: nil,
+		PaymentMethodData:          nil,
+		PaymentMethodOptions:       nil,
+		PaymentMethodTypes:         nil,
+		RadarOptions:               nil,
+		ReceiptEmail:               receiptEmailRef,
+		ReturnURL:                  nil,
+		SetupFutureUsage:           stripe.String(string(stripe.PaymentIntentSetupFutureUsageOffSession)),
+		Shipping:                   nil,
+		StatementDescriptor:        stripe.String(pi.StatementDescriptor),
+		StatementDescriptorSuffix:  stripe.String(pi.StatementDescriptorSuffix),
+		TransferData:               nil,
+		TransferGroup:              nil,
+		ErrorOnRequiresAction:      stripe.Bool(false),
+		OffSession:                 nil,
+		UseStripeSDK:               nil,
+	}
+}
+
+// https://docs.stripe.com/financial-connections/ach-direct-debit-payments#getting-started
+// read about ACH Direct Debit Payments optimizations to check accounts balances before charge.
+// How to check permissions given in default flow?
 func handleCreateSetupIntent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
@@ -126,17 +265,17 @@ func handleCreateSetupIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	customerParams := &stripe.CustomerParams{}
-	c, err := customer.New(customerParams)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		log.Printf("customer.New: %v", err)
-		return
-	}
+	//customerParams := &stripe.CustomerParams{}
+	//c, err := customer.New(customerParams)
+	//if err != nil {
+	//	http.Error(w, err.Error(), http.StatusInternalServerError)
+	//	log.Printf("customer.New: %v", err)
+	//	return
+	//}
 
 	setupIntentParams := &stripe.SetupIntentParams{
-		//Customer: stripe.String("cus_R2DlGHVRhHXOmR"),
-		Customer:    stripe.String(c.ID),
+		Customer: stripe.String("cus_R2wA35BYRGKC8o"),
+		//Customer:    stripe.String(c.ID),
 		Description: stripe.String("Capture payment details for future use"),
 		AutomaticPaymentMethods: &stripe.SetupIntentAutomaticPaymentMethodsParams{
 			Enabled: stripe.Bool(true),
