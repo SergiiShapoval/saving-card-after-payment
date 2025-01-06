@@ -23,7 +23,7 @@ func Test_PayAgain(t *testing.T) {
 
 	// The customer ID and payment method ID should be retrieved from your database
 	// where you stored them when the Setup Intent was confirmed.
-	customerID := "cus_R2wA35BYRGKC8o"
+	customerID := "cus_R88nCQ6UTjjC2u"
 	paymentMethodID := "pm_1QDmpDAJlbf9cOtYb1fZJyw9"
 
 	paymentMethod, err := paymentmethod.Get(paymentMethodID, nil)
@@ -75,7 +75,7 @@ func Test_PayAgainWithFallbackToOnSession(t *testing.T) {
 
 	// The customer ID and payment method ID should be retrieved from your database
 	// where you stored them when the Setup Intent was confirmed.
-	customerID := "cus_R2wA35BYRGKC8o"
+	customerID := "cus_R88nCQ6UTjjC2u"
 	paymentMethodID := "pm_1QAqIeAJlbf9cOtYXOevXdye"
 
 	paymentMethod, err := paymentmethod.Get(paymentMethodID, nil)
@@ -191,7 +191,7 @@ func Test_PayAgainWithSuccessfulPaymentMethod(t *testing.T) {
 
 	// The customer ID and payment method ID should be retrieved from your database
 	// where you stored them when the Setup Intent was confirmed.
-	customerID := "cus_R2wA35BYRGKC8o"
+	customerID := "cus_R88nCQ6UTjjC2u"
 	var paymentMethod *stripe.PaymentMethod
 
 	cDetails, err := customer.Get(customerID, &stripe.CustomerParams{
@@ -284,7 +284,7 @@ func TestRedisplayCheck(t *testing.T) {
 	//	pm := paymentMethods.PaymentMethod()
 	//	t.Logf("PaymentMethod: %s, %s\n", pm.ID, pm.Type)
 	//}
-	//customerID := "cus_R2wA35BYRGKC8o"
+	//customerID := "cus_R88nCQ6UTjjC2u"
 
 	pm, err := paymentmethod.Update("pm_1QAskkAJlbf9cOtYK9N9Gcqz", &stripe.PaymentMethodParams{
 		AllowRedisplay: stripe.String(string(stripe.PaymentMethodAllowRedisplayAlways)),

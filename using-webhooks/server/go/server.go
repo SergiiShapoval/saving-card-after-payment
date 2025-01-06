@@ -3,9 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -32,10 +32,27 @@ func main() {
 	http.HandleFunc("/cancel-payment-intent", handleCancelPaymentIntent)
 	http.HandleFunc("/confirm-payment-intent", handleConfirmPaymentIntent)
 	http.HandleFunc("/webhook", handleWebhook)
+	http.HandleFunc("/config", handleConfig)
 
 	addr := "localhost:4242"
 	log.Printf("Listening on %s ...", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
+}
+
+func handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+	type Config struct {
+		PublishableKey string `json:"publishableKey"`
+	}
+
+	cfg := Config{
+		PublishableKey: os.Getenv("STRIPE_PUBLISHABLE_KEY"),
+	}
+
+	writeJSON(w, cfg)
 }
 
 // PayItemParams represents a single item passed from the client.
@@ -65,9 +82,12 @@ func handleCreatePaymentIntent(w http.ResponseWriter, r *http.Request) {
 	// Decode the incoming request
 	req := PayRequestParams{}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		log.Printf("json.NewDecoder.Decode: %v", err)
-		return
+		if !errors.Is(err, io.EOF) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("json.NewDecoder.Decode: %v", err)
+			return
+		}
+		req.Currency = "USD"
 	}
 
 	//customerParams := &stripe.CustomerParams{}
@@ -82,7 +102,7 @@ func handleCreatePaymentIntent(w http.ResponseWriter, r *http.Request) {
 	paymentIntentParams := &stripe.PaymentIntentParams{
 		Amount:   stripe.Int64(100),
 		Currency: stripe.String(req.Currency),
-		Customer: stripe.String("cus_R2wA35BYRGKC8o"),
+		Customer: stripe.String("cus_R88nCQ6UTjjC2u"),
 		//Customer:                  stripe.String(c.ID),
 		CaptureMethod:             stripe.String(string(stripe.PaymentIntentCaptureMethodManual)),
 		SetupFutureUsage:          stripe.String(string(stripe.PaymentIntentSetupFutureUsageOffSession)),
@@ -145,7 +165,7 @@ func handleResolveLastPaymentIntent(w http.ResponseWriter, r *http.Request) {
 	//paymentIntentParams := &stripe.PaymentIntentParams{
 	//	Amount:   stripe.Int64(100),
 	//	Currency: stripe.String(req.Currency),
-	//	//Customer: stripe.String("cus_R2wA35BYRGKC8o"),
+	//	//Customer: stripe.String("cus_R88nCQ6UTjjC2u"),
 	//	Customer:                  stripe.String(c.ID),
 	//	CaptureMethod:             stripe.String(string(stripe.PaymentIntentCaptureMethodManual)),
 	//	SetupFutureUsage:          stripe.String(string(stripe.PaymentIntentSetupFutureUsageOffSession)),
@@ -274,7 +294,7 @@ func handleCreateSetupIntent(w http.ResponseWriter, r *http.Request) {
 	//}
 
 	setupIntentParams := &stripe.SetupIntentParams{
-		Customer: stripe.String("cus_R2wA35BYRGKC8o"),
+		Customer: stripe.String("cus_R88nCQ6UTjjC2u"),
 		//Customer:    stripe.String(c.ID),
 		Description: stripe.String("Capture payment details for future use"),
 		AutomaticPaymentMethods: &stripe.SetupIntentAutomaticPaymentMethodsParams{
@@ -413,7 +433,7 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
-	b, err := ioutil.ReadAll(r.Body)
+	b, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		log.Printf("ioutil.ReadAll: %v", err)
@@ -436,7 +456,7 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 		var paymentIntent stripe.PaymentIntent
 		err := json.Unmarshal(event.Data.Raw, &paymentIntent)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error parsing webhook JSON: %v\\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "Error parsing webhook JSON: %v\\n", err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
